@@ -154,6 +154,13 @@ def _radio_band(data: dict) -> str:
         return "5GHz"
     if channel > 177:
         return "6GHz"
+    # A disconnected AP reports every radio with an empty radio-band and channel 0, so falling
+    # back to the channel alone would hand each of its radios the same label and they'd overwrite
+    # each other. radio-id is unique per AP and is absent on client and VAP records, which keep
+    # the channel form.
+    radio_id = str(data.get("radio-id", "")).strip()
+    if radio_id:
+        return f"unknown-radio{radio_id}"
     return f"unknown-ch{channel}"
 
 

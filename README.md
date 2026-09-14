@@ -94,9 +94,10 @@ If you would rather expose it, set `DEBUG_BIND=0.0.0.0` and publish `DEBUG_PORT`
 | `ruckus_radio_tx_power` | `ap_mac`, `ap_name`, `radio_band` | TX power relative to max (0=Full/Auto, -1 to -10=reduction steps, -24=min) |
 | `ruckus_radio_noise_floor_dbm` | `ap_mac`, `ap_name`, `radio_band` | Noise floor in dBm |
 | `ruckus_radio_phy_errors_total` | `ap_mac`, `ap_name`, `radio_band` | PHY errors |
-| `ruckus_radio_channel_utilization_percent` | `ap_mac`, `ap_name`, `radio_band` | Airtime busy % |
+| `ruckus_radio_channel_utilization_percent` | `ap_mac`, `ap_name`, `radio_band` | Airtime busy %, the non-self component only. For total channel utilization use `ruckus_radio_airtime_total_percent` |
 | `ruckus_radio_airtime_rx_percent` | `ap_mac`, `ap_name`, `radio_band` | Airtime RX % |
 | `ruckus_radio_airtime_tx_percent` | `ap_mac`, `ap_name`, `radio_band` | Airtime TX % |
+| `ruckus_radio_airtime_total_percent` | `ap_mac`, `ap_name`, `radio_band` | Total airtime utilization %, which the controller reports as `busy + rx + tx` |
 | `ruckus_radio_tx_bytes_total` | `ap_mac`, `ap_name`, `radio_band` | Total cumulative radio TX bytes |
 | `ruckus_radio_rx_bytes_total` | `ap_mac`, `ap_name`, `radio_band` | Total cumulative radio RX bytes |
 | `ruckus_radio_tx_retries_total` | `ap_mac`, `ap_name`, `radio_band` | TX retries |

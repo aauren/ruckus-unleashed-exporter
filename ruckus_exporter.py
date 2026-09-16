@@ -154,6 +154,13 @@ def _radio_band(data: dict) -> str:
         return "5GHz"
     if channel > 177:
         return "6GHz"
+    # A disconnected AP reports every radio with an empty radio-band and channel 0, so falling
+    # back to the channel alone would hand each of its radios the same label and they'd overwrite
+    # each other. radio-id is unique per AP and is absent on client and VAP records, which keep
+    # the channel form.
+    radio_id = str(data.get("radio-id", "")).strip()
+    if radio_id:
+        return f"unknown-radio{radio_id}"
     return f"unknown-ch{channel}"
 
 
@@ -209,12 +216,17 @@ async def collect_metrics() -> bytes:
                               ["ap_mac", "ap_name", "radio_band"], registry=registry)
     radio_phy_errors = Gauge("ruckus_radio_phy_errors_total", "Radio PHY errors",
                              ["ap_mac", "ap_name", "radio_band"], registry=registry)
-    radio_channel_utilization = Gauge("ruckus_radio_channel_utilization_percent", "Airtime busy %",
+    radio_channel_utilization = Gauge("ruckus_radio_channel_utilization_percent",
+                                      "Airtime busy % (non-self airtime only, see "
+                                      "ruckus_radio_airtime_total_percent for total utilization)",
                                       ["ap_mac", "ap_name", "radio_band"], registry=registry)
     radio_airtime_rx = Gauge("ruckus_radio_airtime_rx_percent", "Airtime RX %",
                              ["ap_mac", "ap_name", "radio_band"], registry=registry)
     radio_airtime_tx = Gauge("ruckus_radio_airtime_tx_percent", "Airtime TX %",
                              ["ap_mac", "ap_name", "radio_band"], registry=registry)
+    radio_airtime_total = Gauge("ruckus_radio_airtime_total_percent",
+                                "Total airtime utilization % (busy + rx + tx)",
+                                ["ap_mac", "ap_name", "radio_band"], registry=registry)
     radio_tx_bytes = Gauge("ruckus_radio_tx_bytes_total", "Total cumulative radio TX bytes",
                            ["ap_mac", "ap_name", "radio_band"], registry=registry)
     radio_rx_bytes = Gauge("ruckus_radio_rx_bytes_total", "Total cumulative radio RX bytes",
@@ -405,15 +417,25 @@ async def collect_metrics() -> bytes:
                         radio_phy_errors.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
                             _safe_float(radio.get("phyerr", 0))
                         )
-                        radio_channel_utilization.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("airtime-busy", 0)) / 10
-                        )
-                        radio_airtime_rx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("airtime-rx", 0)) / 10
-                        )
-                        radio_airtime_tx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("airtime-tx", 0)) / 10
-                        )
+                        # Airtime counters accumulate over rf-samples sampling intervals, so we
+                        # divide by it to recover the percentage the controller UI displays. The
+                        # divisor is per-radio and not a constant: an R670 reports 1 while an R850
+                        # reports 11. A disconnected AP omits these keys entirely, and without a
+                        # sample count we can't scale, so we publish nothing rather than a fake 0.
+                        rf_samples = _safe_float(radio.get("rf-samples", 0))
+                        if rf_samples > 0:
+                            radio_channel_utilization.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
+                                _safe_float(radio.get("airtime-busy", 0)) / rf_samples
+                            )
+                            radio_airtime_rx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
+                                _safe_float(radio.get("airtime-rx", 0)) / rf_samples
+                            )
+                            radio_airtime_tx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
+                                _safe_float(radio.get("airtime-tx", 0)) / rf_samples
+                            )
+                            radio_airtime_total.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
+                                _safe_float(radio.get("airtime-total", 0)) / rf_samples
+                            )
                         radio_tx_bytes.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
                             _safe_float(radio.get("total-tx-bytes", 0))
                         )

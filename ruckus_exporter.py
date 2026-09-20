@@ -85,16 +85,18 @@ _AP_REDACT = {"preSharedKey", "psk"}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_float(val, default=0.0):
+def _num(val, default=0):
+    """Guard a value on its way into a Gauge.
+
+    aioruckus 0.49 hands us the numeric fields as int/float already, but it leaves
+    placeholders such as "" and "N/A" (which a disconnected AP reports for most of
+    its counters) as strings, and a couple of fields we read are still typed str
+    upstream. Gauge.set() would raise on any of those and abort the whole section.
+    """
+    if isinstance(val, (int, float)):
+        return val
     try:
         return float(val)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(val, default=0):
-    try:
-        return int(val)
     except (TypeError, ValueError):
         return default
 
@@ -116,7 +118,7 @@ def _radio_band(data: dict) -> str:
     rb = str(data.get("radio-band", ""))
     if rb:
         return _band_from_str(rb)
-    channel = _safe_int(data.get("channel", 0))
+    channel = _num(data.get("channel", 0))
     if 1 <= channel <= 14:
         return "2.4GHz"
     if 36 <= channel <= 177:
@@ -133,9 +135,9 @@ def _radio_band(data: dict) -> str:
     return f"unknown-ch{channel}"
 
 
-def _mem_percent(avail: str, total: str) -> float:
-    t = _safe_float(total)
-    a = _safe_float(avail)
+def _mem_percent(avail, total) -> float:
+    t = _num(total)
+    a = _num(avail)
     if t <= 0:
         return 0.0
     return round((t - a) / t * 100, 1)
@@ -336,10 +338,10 @@ async def collect_metrics() -> bytes:
                     "firmware": str(master_ap.get("firmware-version", "")),
                     "hardware_version": str(master_ap.get("hardware-version", "")),
                 })
-                system_cpu.set(_safe_float(master_ap.get("cpu_util", 0)))
+                system_cpu.set(_num(master_ap.get("cpu_util", 0)))
                 system_memory.set(_mem_percent(
-                    master_ap.get("mem_avail", "0"),
-                    master_ap.get("mem_total", "0"),
+                    master_ap.get("mem_avail", 0),
+                    master_ap.get("mem_total", 0),
                 ))
 
                 total_clients = 0
@@ -348,14 +350,14 @@ async def collect_metrics() -> bytes:
                     name = ap.get("devname", mac)
                     model = ap.get("model", "unknown")
                     is_connected = 1 if str(ap.get("state", "0")) == "1" else 0
-                    ap_client_count = _safe_int(ap.get("num-sta", 0))
+                    ap_client_count = _num(ap.get("num-sta", 0))
 
                     ap_status.labels(ap_mac=mac, ap_name=name, ap_model=model).set(is_connected)
                     ap_clients.labels(ap_mac=mac, ap_name=name).set(ap_client_count)
-                    ap_uptime.labels(ap_mac=mac, ap_name=name).set(_safe_float(ap.get("uptime", 0)))
-                    ap_lan_rx_bytes.labels(ap_mac=mac, ap_name=name).set(_safe_float(ap.get("lan_stats_rx_byte", 0)))
-                    ap_lan_tx_bytes.labels(ap_mac=mac, ap_name=name).set(_safe_float(ap.get("lan_stats_tx_byte", 0)))
-                    ap_rogue.labels(ap_mac=mac, ap_name=name).set(_safe_int(ap.get("num-rogue", 0)))
+                    ap_uptime.labels(ap_mac=mac, ap_name=name).set(_num(ap.get("uptime", 0)))
+                    ap_lan_rx_bytes.labels(ap_mac=mac, ap_name=name).set(_num(ap.get("lan_stats_rx_byte", 0)))
+                    ap_lan_tx_bytes.labels(ap_mac=mac, ap_name=name).set(_num(ap.get("lan_stats_tx_byte", 0)))
+                    ap_rogue.labels(ap_mac=mac, ap_name=name).set(_num(ap.get("num-rogue", 0)))
                     reboot_reasons = {
                         "application":  "application-reboot-counter",
                         "user":         "user-reboot-counter",
@@ -366,7 +368,7 @@ async def collect_metrics() -> bytes:
                     }
                     for reason, field in reboot_reasons.items():
                         ap_reboot.labels(ap_mac=mac, ap_name=name, reason=reason).set(
-                            _safe_int(ap.get(field, 0))
+                            _num(ap.get(field, 0))
                         )
                     total_clients += ap_client_count
 
@@ -380,72 +382,72 @@ async def collect_metrics() -> bytes:
                         channel = str(radio.get("channel", "0"))
 
                         radio_clients.labels(ap_mac=mac, ap_name=name, radio_band=band, channel=channel).set(
-                            _safe_int(radio.get("num-sta", 0))
+                            _num(radio.get("num-sta", 0))
                         )
-                        _txp = _safe_float(radio.get("tx-power", 0))
+                        _txp = _num(radio.get("tx-power", 0))
                         radio_tx_power.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
                             -_txp if _txp != 0 else 0
                         )
                         radio_noise_floor.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("noisefloor", 0))
+                            _num(radio.get("noisefloor", 0))
                         )
                         radio_phy_errors.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("phyerr", 0))
+                            _num(radio.get("phyerr", 0))
                         )
                         # Airtime counters accumulate over rf-samples sampling intervals, so we
                         # divide by it to recover the percentage the controller UI displays. The
                         # divisor is per-radio and not a constant: an R670 reports 1 while an R850
                         # reports 11. A disconnected AP omits these keys entirely, and without a
                         # sample count we can't scale, so we publish nothing rather than a fake 0.
-                        rf_samples = _safe_float(radio.get("rf-samples", 0))
+                        rf_samples = _num(radio.get("rf-samples", 0))
                         if rf_samples > 0:
                             radio_channel_utilization.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                                _safe_float(radio.get("airtime-busy", 0)) / rf_samples
+                                _num(radio.get("airtime-busy", 0)) / rf_samples
                             )
                             radio_airtime_rx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                                _safe_float(radio.get("airtime-rx", 0)) / rf_samples
+                                _num(radio.get("airtime-rx", 0)) / rf_samples
                             )
                             radio_airtime_tx.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                                _safe_float(radio.get("airtime-tx", 0)) / rf_samples
+                                _num(radio.get("airtime-tx", 0)) / rf_samples
                             )
                             radio_airtime_total.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                                _safe_float(radio.get("airtime-total", 0)) / rf_samples
+                                _num(radio.get("airtime-total", 0)) / rf_samples
                             )
                         radio_tx_bytes.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("total-tx-bytes", 0))
+                            _num(radio.get("total-tx-bytes", 0))
                         )
                         radio_rx_bytes.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("total-rx-bytes", 0))
+                            _num(radio.get("total-rx-bytes", 0))
                         )
                         radio_tx_retries.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("radio-total-retries", 0))
+                            _num(radio.get("radio-total-retries", 0))
                         )
                         radio_tx_packets.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("radio-total-tx-pkts", 0))
+                            _num(radio.get("radio-total-tx-pkts", 0))
                         )
                         radio_tx_failures.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("radio-total-tx-fail", 0))
+                            _num(radio.get("radio-total-tx-fail", 0))
                         )
                         radio_avg_rssi.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            -_safe_float(radio.get("avg-rssi", 0))
+                            -_num(radio.get("avg-rssi", 0))
                         )
                         radio_channel_width.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("channelization", 0))
+                            _num(radio.get("channelization", 0))
                         )
                         radio_assoc_failures.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("mgmt-assoc-fail", 0))
+                            _num(radio.get("mgmt-assoc-fail", 0))
                         )
                         radio_disassoc_abnormal.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("mgmt-disassoc-abnormal", 0))
+                            _num(radio.get("mgmt-disassoc-abnormal", 0))
                         )
                         radio_rx_packets.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("radio-total-rx-pkts", 0))
+                            _num(radio.get("radio-total-rx-pkts", 0))
                         )
                         radio_rx_decrypt_errors.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_float(radio.get("radio-total-rx-decrypt-error", 0))
+                            _num(radio.get("radio-total-rx-decrypt-error", 0))
                         )
                         radio_auth_failures.labels(ap_mac=mac, ap_name=name, radio_band=band).set(
-                            _safe_int(radio.get("mgmt-auth-fail", 0))
+                            _num(radio.get("mgmt-auth-fail", 0))
                         )
 
                 system_num_ap.set(ap_count)
@@ -475,8 +477,8 @@ async def collect_metrics() -> bytes:
                     labels = dict(client_mac=cl_mac, client_name=cl_name,
                                   ap_mac=cl_ap, ssid=cl_ssid, radio_band=cl_band)
 
-                    rssi_val = _safe_float(cl.get("received-signal-strength", 0))
-                    nf_val = _safe_float(cl.get("noise-floor", 0))
+                    rssi_val = _num(cl.get("received-signal-strength", 0))
+                    nf_val = _num(cl.get("noise-floor", 0))
                     client_rssi.labels(**labels).set(rssi_val)
                     client_noise_floor.labels(**labels).set(nf_val)
                     if rssi_val != 0 and nf_val != 0:
@@ -497,16 +499,16 @@ async def collect_metrics() -> bytes:
                     })
 
                     # Session stats (available via interval_stats=True; reset to 0 on reconnect)
-                    first_assoc = _safe_float(cl.get("first-assoc", 0))
+                    first_assoc = _num(cl.get("first-assoc", 0))
                     if first_assoc > 0:
                         client_session_duration.labels(**labels).set(now_ts - first_assoc)
-                    client_session_rx_bytes.labels(**labels).set(_safe_float(cl.get("total-rx-bytes", 0)))
-                    client_session_tx_bytes.labels(**labels).set(_safe_float(cl.get("total-tx-bytes", 0)))
-                    client_session_rx_packets.labels(**labels).set(_safe_float(cl.get("total-rx-pkts", 0)))
-                    client_session_tx_packets.labels(**labels).set(_safe_float(cl.get("total-tx-pkts", 0)))
-                    client_session_retries.labels(**labels).set(_safe_float(cl.get("total-retries", 0)))
-                    client_session_rx_crc_errors.labels(**labels).set(_safe_float(cl.get("total-rx-crc-errs", 0)))
-                    client_session_tx_drop_data.labels(**labels).set(_safe_float(cl.get("tx-drop-data", 0)))
+                    client_session_rx_bytes.labels(**labels).set(_num(cl.get("total-rx-bytes", 0)))
+                    client_session_tx_bytes.labels(**labels).set(_num(cl.get("total-tx-bytes", 0)))
+                    client_session_rx_packets.labels(**labels).set(_num(cl.get("total-rx-pkts", 0)))
+                    client_session_tx_packets.labels(**labels).set(_num(cl.get("total-tx-pkts", 0)))
+                    client_session_retries.labels(**labels).set(_num(cl.get("total-retries", 0)))
+                    client_session_rx_crc_errors.labels(**labels).set(_num(cl.get("total-rx-crc-errs", 0)))
+                    client_session_tx_drop_data.labels(**labels).set(_num(cl.get("tx-drop-data", 0)))
 
             except Exception as e:
                 log.error("Error collecting client stats: %s", e)
@@ -525,31 +527,31 @@ async def collect_metrics() -> bytes:
                     v_band = _radio_band(vap)
 
                     vap_clients.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band, bssid=v_bssid).set(
-                        _safe_int(vap.get("num-sta", 0))
+                        _num(vap.get("num-sta", 0))
                     )
                     vap_tx_bytes.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("tx-bytes", 0))
+                        _num(vap.get("tx-bytes", 0))
                     )
                     vap_rx_bytes.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("rx-bytes", 0))
+                        _num(vap.get("rx-bytes", 0))
                     )
                     vap_tx_pkts.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("tx-pkts", 0))
+                        _num(vap.get("tx-pkts", 0))
                     )
                     vap_rx_pkts.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("rx-pkts", 0))
+                        _num(vap.get("rx-pkts", 0))
                     )
                     vap_tx_errors.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("tx-errors", 0))
+                        _num(vap.get("tx-errors", 0))
                     )
                     vap_rx_errors.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_float(vap.get("rx-errors", 0))
+                        _num(vap.get("rx-errors", 0))
                     )
                     vap_tx_drop_pkts.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_int(vap.get("tx-data-drop-pkts", 0))
+                        _num(vap.get("tx-data-drop-pkts", 0))
                     )
                     vap_rx_drop_pkts.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band).set(
-                        _safe_int(vap.get("rx-drop-pkt", 0))
+                        _num(vap.get("rx-drop-pkt", 0))
                     )
                     vap_status.labels(ap_mac=v_ap, ssid=v_ssid, radio_band=v_band, bssid=v_bssid).set(
                         1 if vap.get("vap-up", "") == "Up" else 0

@@ -74,9 +74,10 @@ _scrape_lock = asyncio.Lock()
 # ---------------------------------------------------------------------------
 _debug_data: dict = {}
 
-# Fields stripped from client records before storing in _debug_data
+# Fields stripped from records before storing in _debug_data. aioruckus's
+# redact_secrets only knows about the x- prefixed pairs (x-psk/psk), so we
+# keep this denylist for the bare fields it can't recognize
 _CLIENT_REDACT = {"wpa-passphrase"}
-# Fields stripped from AP records before storing in _debug_data
 _AP_REDACT = {"preSharedKey", "psk"}
 
 
@@ -285,8 +286,10 @@ async def collect_metrics() -> bytes:
     client_count = 0
 
     try:
+        # We never need a decrypted passphrase, so have aioruckus drop them
+        # before they land in any response we hold on to for /debug
         async with AjaxSession.async_create(
-            RUCKUS_HOST, RUCKUS_USER, RUCKUS_PASS
+            RUCKUS_HOST, RUCKUS_USER, RUCKUS_PASS, redact_secrets=True
         ) as session:
             api = session.api
 
